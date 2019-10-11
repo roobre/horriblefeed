@@ -16,7 +16,7 @@ func main() {
 	user := flag.String("user", "transmission", "Transmission user")
 	password := flag.String("pass", "transmission", "Transmission password")
 	horriblefeed := flag.String("horriblefeed", "https://www.horriblesubs.info/rss.php?res=1080", "HorribleSubs feed url")
-	maxage := flag.Duration("maxage", 2 * 7 * 24 * time.Hour, "Stop reading horrible feed when this age is reached")
+	maxage := flag.Duration("maxage", 2*7*24*time.Hour, "Stop reading horrible feed when this age is reached")
 	daemonize := flag.Bool("daemonize", false, "Run as a daemon in a loop")
 
 	flag.Parse()
@@ -64,8 +64,8 @@ func main() {
 			}
 
 			_, err := transmission.TorrentAdd(&transmissionrpc.TorrentAddPayload{
-				DownloadDir:       existingTorrents[0].DownloadDir,
-				Filename:          &item.Link,
+				DownloadDir: existingTorrents[0].DownloadDir,
+				Filename:    &item.Link,
 			})
 
 			if err != nil {
@@ -84,7 +84,7 @@ func main() {
 	}
 }
 
-var seriesNameRegex = regexp.MustCompile(`\[[Hh]orrible[Ss]ubs\] ?(.+) ?- \d+ \[\d+p?\](?:\.\w{1,5})`)
+var seriesNameRegex = regexp.MustCompile(`\[[Hh]orrible[Ss]ubs\] ?(.+) ?- \d+ \[\d+p?\](?:\.\w{1,5})?`)
 
 func seriesName(chapterName string) string {
 	matches := seriesNameRegex.FindStringSubmatch(chapterName)
