@@ -27,7 +27,7 @@ func main() {
 	})
 	if err != nil {
 		fmt.Println(err)
-		os.Exit(2)
+		os.Exit(1)
 	}
 
 	parser := gofeed.NewParser()
@@ -43,9 +43,11 @@ func main() {
 		series := map[string][]*transmissionrpc.Torrent{}
 
 		for _, t := range torrents {
-			series[seriesName(*t.Name)] = append(series[seriesName(*t.Name)], t)
+			sName := seriesName(*t.Name)
+			if sName != "" {
+				series[sName] = append(series[sName], t)
+			}
 		}
-		delete(series, "")
 
 		feed, err := parser.ParseURL(*horriblefeed)
 		if err != nil {
