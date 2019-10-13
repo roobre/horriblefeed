@@ -40,12 +40,12 @@ func main() {
 			os.Exit(2)
 		}
 
-		series := map[string][]*transmissionrpc.Torrent{}
+		series := map[string]*transmissionrpc.Torrent{}
 
 		for _, t := range torrents {
 			sName := seriesName(*t.Name)
 			if sName != "" {
-				series[sName] = append(series[sName], t)
+				addTorrent(series, sName, t)
 			}
 		}
 
@@ -60,13 +60,13 @@ func main() {
 				break
 			}
 
-			existingTorrents := series[seriesName(item.Title)]
-			if len(existingTorrents) == 0 {
+			previousTorrent := series[seriesName(item.Title)]
+			if previousTorrent == nil || previousTorrent.AddedDate.After(*item.PublishedParsed) {
 				continue
 			}
 
 			_, err := transmission.TorrentAdd(&transmissionrpc.TorrentAddPayload{
-				DownloadDir: existingTorrents[0].DownloadDir,
+				DownloadDir: previousTorrent.DownloadDir,
 				Filename:    &item.Link,
 			})
 
@@ -95,4 +95,10 @@ func seriesName(chapterName string) string {
 	}
 
 	return ""
+}
+
+func addTorrent(torrents map[string]*transmissionrpc.Torrent, key string, value *transmissionrpc.Torrent) {
+	if torrents[key] == nil || torrents[key].AddedDate.Before(*value.AddedDate) {
+		torrents[key] = value
+	}
 }
