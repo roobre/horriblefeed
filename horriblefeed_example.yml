@@ -1,0 +1,11 @@
+transmission:
+  username: transmission
+  password: supers3cr3tt
+  host: localhost
+  port: 443
+  ssl: true
+
+feeds:
+  - url: https://www.horriblesubs.info/rss.php?res=1080
+
+intervalMinutes: 10

@@ -1,104 +1,137 @@
-package main
+package horriblefeed
 
 import (
-	"flag"
-	"fmt"
-	"github.com/hekmon/transmissionrpc"
 	"github.com/mmcdole/gofeed"
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
 	"log"
 	"os"
 	"regexp"
+	"sync"
 	"time"
 )
 
-func main() {
-	host := flag.String("host", "localhost", "Transmission URL")
-	user := flag.String("user", "transmission", "Transmission user")
-	password := flag.String("pass", "transmission", "Transmission password")
-	horriblefeed := flag.String("horriblefeed", "https://www.horriblesubs.info/rss.php?res=1080", "HorribleSubs feed url")
-	maxage := flag.Duration("maxage", 2*7*24*time.Hour, "Stop reading horrible feed when this age is reached")
-	daemonize := flag.Bool("daemonize", false, "Run as a daemon in a loop")
+type HorribleFeed struct {
+	transmission *transmission
 
-	flag.Parse()
+	feedParser *gofeed.Parser
+	feedsLock  sync.Mutex
+	feeds      []feed
+	maxFeedAge time.Duration
 
-	transmission, err := transmissionrpc.New(*host, *user, *password, &transmissionrpc.AdvancedConfig{
-		HTTPS: true,
-		Port:  443,
-	})
+	defaultRegex *regexp.Regexp
+	log          *log.Logger
+}
+
+type feed struct {
+	url   string
+	regex *regexp.Regexp
+}
+
+const defaultRegex = `\[[\w\d-_ ]+\] ?(.+) - \d+`
+
+func New(config *viper.Viper) (*HorribleFeed, error) {
+	transmission, err := newTransmissionClient(config.Sub("transmission"))
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return nil, errors.WithMessage(err, "cannot connect to transmission")
 	}
 
-	parser := gofeed.NewParser()
+	hf := &HorribleFeed{
+		transmission: transmission,
+		feedParser:   gofeed.NewParser(),
+		defaultRegex: regexp.MustCompile(defaultRegex),
+		log:          log.New(os.Stderr, "", 0),
+		maxFeedAge:   2 * 7 * 24 * time.Hour, // 2 weeks old
+	}
+	err = hf.UseFeeds(config)
+	if err != nil {
+		return nil, err
+	}
 
-	run := true
-	for run {
-		torrents, err := transmission.TorrentGetAll()
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(2)
+	return hf, nil
+}
+
+func (hf *HorribleFeed) UseFeeds(config *viper.Viper) error {
+	var feedsConfig struct {
+		Feeds []struct {
+			URL   string
+			Regex string
 		}
+	}
 
-		series := map[string]*transmissionrpc.Torrent{}
+	err := config.Unmarshal(&feedsConfig)
+	if err != nil {
+		return errors.WithMessage(err, "could not load feeds config")
+	}
 
-		for _, t := range torrents {
-			sName := seriesName(*t.Name)
-			if sName != "" {
-				addTorrent(series, sName, t)
+	newFeeds := make([]feed, 0, len(feedsConfig.Feeds))
+	for _, f := range feedsConfig.Feeds {
+		var rx *regexp.Regexp
+		if f.Regex != "" {
+			rx, err = regexp.Compile(f.Regex)
+			if err != nil {
+				return errors.WithMessagef(err, "could not load feeds config, regex `%s` does not compile", f.Regex)
 			}
+		} else {
+			rx = hf.defaultRegex
 		}
 
-		feed, err := parser.ParseURL(*horriblefeed)
+		newFeeds = append(newFeeds, feed{
+			url:   f.URL,
+			regex: rx,
+		})
+	}
+
+	hf.feedsLock.Lock()
+	hf.feeds = newFeeds
+	hf.feedsLock.Unlock()
+
+	return nil
+}
+
+func (hf *HorribleFeed) ParseAndAdd() {
+	hf.feedsLock.Lock()
+	defer hf.feedsLock.Unlock()
+
+	for _, feed := range hf.feeds {
+		parsedFeed, err := hf.feedParser.ParseURL(feed.url)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(3)
+			hf.log.Println(errors.WithMessagef(err, "error parsing '%s'", feed.url))
+			continue
 		}
 
-		for _, item := range feed.Items {
-			if time.Since(*item.PublishedParsed) > *maxage {
+		hf.log.Printf("Parsing %s...\n", parsedFeed.Title)
+
+		series := hf.transmission.SeriesMatching(feed.regex)
+		for _, item := range parsedFeed.Items {
+			if time.Since(*item.PublishedParsed) > hf.maxFeedAge {
+				// Assume feed is ordered chronologically, so one item older than threshold implies following items are older as well
 				break
 			}
 
-			previousTorrent := series[seriesName(item.Title)]
-			if previousTorrent == nil || previousTorrent.AddedDate.After(*item.PublishedParsed) {
+			prevTorrent := series[extractName(item.Title, feed.regex)]
+
+			// Discard untracked and already added torrents
+			if prevTorrent == nil || prevTorrent.AddedDate.After(*item.PublishedParsed) {
 				continue
 			}
 
-			_, err := transmission.TorrentAdd(&transmissionrpc.TorrentAddPayload{
-				DownloadDir: previousTorrent.DownloadDir,
-				Filename:    &item.Link,
-			})
-
+			err := hf.transmission.AddLike(item.Link, prevTorrent)
 			if err != nil {
-				log.Printf("Error adding %s: %s\n", item.Title, err.Error())
-				continue
+				hf.log.Println(errors.WithMessagef(err, "error adding %s:", item.Title))
+			} else {
+				hf.log.Printf("Added %s\n", item.Title)
 			}
-
-			log.Printf("Added %s\n", item.Title)
-		}
-
-		run = *daemonize
-		if run {
-			log.Println("End of feed reached, sleeping")
-			time.Sleep(10 * time.Minute)
 		}
 	}
 }
 
-var seriesNameRegex = regexp.MustCompile(`\[[Hh]orrible[Ss]ubs\] ?(.+) ?- \d+ \[\d+p?\](?:\.\w{1,5})?`)
-
-func seriesName(chapterName string) string {
-	matches := seriesNameRegex.FindStringSubmatch(chapterName)
-	if len(matches) >= 2 {
-		return matches[1]
+// extractName extracts the series name from a chapter and a regex. Regex is asumed to capture the name in $1
+func extractName(chapter string, rx *regexp.Regexp) string {
+	matches := rx.FindStringSubmatch(chapter)
+	if len(matches) < 2 {
+		return ""
 	}
 
-	return ""
-}
-
-func addTorrent(torrents map[string]*transmissionrpc.Torrent, key string, value *transmissionrpc.Torrent) {
-	if torrents[key] == nil || torrents[key].AddedDate.Before(*value.AddedDate) {
-		torrents[key] = value
-	}
+	return matches[1]
 }
