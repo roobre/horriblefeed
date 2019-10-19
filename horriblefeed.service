@@ -1,0 +1,11 @@
+[Unit]
+Description=Send new anime chapters from rss feeds to transmission
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/horriblefeed
+Restart=always
+RestartSec=1m
+
+[Install]
+WantedBy=default.target
