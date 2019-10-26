@@ -50,6 +50,9 @@ func (t *transmission) SeriesMatching(rx *regexp.Regexp) map[string]*transmissio
 	}
 	for _, torrent := range torrents {
 		name := extractName(*torrent.Name, rx)
+		if name == "" {
+			continue
+		}
 
 		if series[name] == nil || series[name].AddedDate.Before(*torrent.AddedDate) {
 			series[name] = torrent
