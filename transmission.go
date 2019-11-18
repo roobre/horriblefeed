@@ -63,11 +63,20 @@ func (t *transmission) SeriesMatching(rx *regexp.Regexp) map[string]*transmissio
 }
 
 func (t *transmission) AddLike(newTorrent string, like *transmissionrpc.Torrent) error {
-	_, err := t.client.TorrentAdd(&transmissionrpc.TorrentAddPayload{
-		Filename: &newTorrent,
-
+	torrent, err := t.client.TorrentAdd(&transmissionrpc.TorrentAddPayload{
+		Filename:          &newTorrent,
 		DownloadDir:       like.DownloadDir,
 		BandwidthPriority: like.BandwidthPriority,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Copy seed ratio limit as well
+	_ = t.client.TorrentSet(&transmissionrpc.TorrentSetPayload{
+		IDs: []int64{*torrent.ID},
+
+		SeedRatioLimit: like.SeedRatioLimit,
 	})
 
 	return err
