@@ -5,7 +5,17 @@ transmission:
   port: 443
   ssl: true
 
+regexes:
+  anime: "\[[\w\d-_ ]+\] ?(.+) - \d+"
+  series: "(.*) ?S(\d+)E(\d+)"
+
 feeds:
   - url: https://www.horriblesubs.info/rss.php?res=1080
+    format: rss
+    regex: anime
+
+  - url: piratebay.or.something
+    format: piratebay
+    regex: series
 
 intervalMinutes: 10
